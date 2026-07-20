@@ -243,13 +243,13 @@ function WealthDashboard() {
     };
 
     try {
-      const sep = DEFAULT_API_URL.includes('?') ? '&' : '?';
+      const sep = DEFAULT__URL.includes('?') ? '&' : '?';
       const script = document.createElement('script');
       script.id = callbackName;
-      script.src = DEFAULT_API_URL + sep + 'callback=' + callbackName;
+      script.src = DEFAULT__URL + sep + 'callback=' + callbackName;
       script.onerror = () => {
         cleanup();
-        setError('API 연동에 실패했습니다. (네트워크나 스크립트 주소 확인 필요)');
+        setError(' 연동에 실패했습니다. (네트워크나 스크립트 주소 확인 필요)');
         setLoading(false);
       };
       document.body.appendChild(script);
