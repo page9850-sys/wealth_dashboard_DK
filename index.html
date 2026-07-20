@@ -1,0 +1,560 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>금융 자산 현황 · Wealth Ledger</title>
+<script>
+  function showFatal(msg) {
+    var el = document.createElement('div');
+    el.style.cssText = 'color:#F3EFE4;background:#1B1F2A;padding:20px;font-family:monospace;font-size:13px;white-space:pre-wrap;min-height:100vh;box-sizing:border-box;';
+    el.textContent = '시스템 초기화 에러: ' + msg;
+    if (document.body) {
+      document.body.innerHTML = '';
+      document.body.appendChild(el);
+    } else {
+      window.addEventListener('DOMContentLoaded', function () {
+        document.body.innerHTML = '';
+        document.body.appendChild(el);
+      });
+    }
+  }
+</script>
+<script src="https://cdn.tailwindcss.com" onerror="showFatal('Tailwind CDN 로드 실패')"></script>
+<script src="https://unpkg.com/react@18/umd/react.production.min.js" onerror="showFatal('React 로드 실패')"></script>
+<script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js" onerror="showFatal('ReactDOM 로드 실패')"></script>
+<script src="https://unpkg.com/react-is@18/umd/react-is.production.min.js" onerror="showFatal('react-is 로드 실패')"></script>
+<script src="https://unpkg.com/prop-types/prop-types.js" onerror="showFatal('prop-types 로드 실패')"></script>
+<script src="https://unpkg.com/recharts/umd/Recharts.js" onerror="showFatal('Recharts 로드 실패')"></script>
+<script src="https://unpkg.com/@babel/standalone/babel.min.js" onerror="showFatal('Babel Standalone 로드 실패')"></script>
+<style>
+  body { margin: 0; }
+  ::-webkit-scrollbar { display: none !important; }
+</style>
+</head>
+<body>
+<div id="root"></div>
+
+<script type="text/babel">
+const { useState, useMemo, useEffect } = React;
+const {
+  BarChart, Bar, LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip,
+  ResponsiveContainer, PieChart, Pie, Cell, Legend,
+} = Recharts;
+
+// ─── 사용자가 새로 제공해 준 정확한 구글 웹앱 API 주소 반영 ───
+const DEFAULT_API_URL = "https://script.google.com/macros/s/AKfycbwHr4IbNxoGSTAQNp83tAnfXki0_8JVu-JX31NxnNWqDNMSUFyV_U4Jz16y8ks6F6sIRg/exec"; 
+
+const DEMO = {
+  // 참고: avgPrice 필드는 시트의 F열 값을 그대로 쓰며, 실제로는 "1주당 평균단가"가 아니라
+  // "투자원금(총 매입금액, KRW)"으로 기록되어 있음 — 수익률 계산의 기준값으로 사용.
+  // 아래 name/avgPrice는 실제 시트에서 확인된 값을 우선 반영했고, 나머지는 데모용 근사치임
+  // (실 연동 시에는 시트 데이터가 그대로 정확히 반영됨).
+  stockHoldings: [
+    { person: '용이', name: 'Vangard S&P 500', asset: 'S&P500', avgPrice: 46123077, value: 92542991.93 },
+    { person: '용이', name: '리얼티 인컴', asset: 'Dividend', avgPrice: 3886913, value: 4888594.015 },
+    { person: '용이', name: 'SCHD', asset: 'Dividend', avgPrice: 1468727, value: 1469033.289 },
+    { person: '용이', name: 'QQQM', asset: 'Nasdaq', avgPrice: 1325433, value: 1278027.715 },
+    { person: '용이', name: 'ACE 미국 S&P500 ETF', asset: 'S&P500', avgPrice: 15475725, value: 27769245 },
+    { person: '용이', name: 'Tiger 미국 S&P500 ETF', asset: 'S&P500', avgPrice: 5413655, value: 12258400 },
+    { person: '용이', name: 'ACE 미국 나스닥 100 ETF', asset: 'Nasdaq', avgPrice: 8637037, value: 20956950 },
+    { person: '용이', name: 'Tiger 미국테크TOP10 INDXX', asset: 'Nasdaq', avgPrice: 9733820, value: 18664020 },
+    { person: '용이', name: '현금자산', asset: 'CASH', avgPrice: 1664020, value: 1664020 },
+    { person: '용이', name: 'ACE 미국 S&P500 ETF(연금)', asset: 'S&P500', avgPrice: 3900000, value: 4304655 },
+    { person: '용이', name: 'Tiger 미국 S&P500 ETF(연금)', asset: 'S&P500', avgPrice: 5800000, value: 6407800 },
+    { person: '용이', name: 'ACE 미국 나스닥 100 ETF(연금)', asset: 'Nasdaq', avgPrice: 6200000, value: 6819325 },
+    { person: '용이', name: 'Tiger 미국테크TOP10(연금)', asset: 'Nasdaq', avgPrice: 480000, value: 531360 },
+    { person: '용이', name: 'ACE 미국채30년(연금)', asset: 'Bond', avgPrice: 4650000, value: 4881000 },
+    { person: '용이', name: 'ACE 미국하이일드(연금)', asset: 'Bond', avgPrice: 980000, value: 1024500 },
+    { person: '용이', name: '현금자산(연금)', asset: 'CASH', avgPrice: 1838840, value: 1838840 },
+    { person: '용이', name: 'Vangard S&P 500(IRP)', asset: 'S&P500', avgPrice: 71000000, value: 79059350 },
+    { person: '용이', name: 'QQQM(IRP)', asset: 'Nasdaq', avgPrice: 76000000, value: 84160450 },
+    { person: '용이', name: '현금자산(IRP)', asset: 'CASH', avgPrice: 7000000, value: 7000000 },
+    { person: '용이', name: '현금자산(일반)', asset: 'CASH', avgPrice: 46794480, value: 46794480 },
+    { person: '용이', name: 'CMA', asset: 'CASH', avgPrice: 4058124, value: 4058124 },
+    { person: '용이', name: '파킹통장', asset: 'CASH', avgPrice: 5003770, value: 5003770 },
+    { person: '용이', name: 'ACE 미국 나스닥 100 ETF(추가)', asset: 'Nasdaq', avgPrice: 3900000, value: 4267000 },
+    { person: '용이', name: '현금자산(기타)', asset: 'CASH', avgPrice: 19079, value: 19079 },
+    { person: '갱이', name: 'SCHD(갱이)', asset: 'S&P500', avgPrice: 480000, value: 518915.5875 },
+    { person: '갱이', name: 'Vangard S&P 500(갱이)', asset: 'S&P500', avgPrice: 28500000, value: 31370525 },
+    { person: '갱이', name: 'ACE 미국 S&P500 ETF(갱이)', asset: 'S&P500', avgPrice: 15700000, value: 17217480 },
+    { person: '갱이', name: 'ACE 미국 나스닥 100 ETF(갱이)', asset: 'Nasdaq', avgPrice: 30100000, value: 33098675 },
+    { person: '갱이', name: 'QQQM(갱이)', asset: 'Nasdaq', avgPrice: 11500000, value: 12619800 },
+    { person: '갱이', name: 'Tiger 미국테크TOP10(갱이)', asset: 'Nasdaq', avgPrice: 3670000, value: 4032315 },
+    { person: '갱이', name: '현금자산(갱이)', asset: 'CASH', avgPrice: 708, value: 708 },
+    { person: '갱이', name: '리얼티 인컴(갱이)', asset: 'Dividend', avgPrice: 6750000, value: 7420800 },
+    { person: '갱이', name: 'ACE 미국 나스닥 100 ETF(갱이2)', asset: 'Nasdaq', avgPrice: 12800000, value: 14081100 },
+    { person: '갱이', name: '현금자산(갱이2)', asset: 'CASH', avgPrice: 392980, value: 392980 },
+    { person: '갱이', name: 'Tiger 미국테크TOP10(갱이2)', asset: 'Nasdaq', avgPrice: 3780000, value: 4160325 },
+    { person: '갱이', name: '현금자산(갱이3)', asset: 'CASH', avgPrice: 8712, value: 8712 },
+    { person: '용이', name: '정기예금', asset: 'CASH', avgPrice: 100000000, value: 100000000 },
+  ],
+  investPlan: {
+    stages: [
+      { key: 'stage1', period: '2026~29', label: '1단계' },
+      { key: 'stage2', period: '2030~32', label: '2단계' },
+      { key: 'stage3', period: '2033~35', label: '3단계' },
+    ],
+    categories: [
+      { name: 'Nasdaq', currentAmount: 204669347.7, currentRatio: 0.3089, stage1Target: 0.20, stage2Target: 0.15, stage3Target: 0.05 },
+      { name: 'S&P500', currentAmount: 271449362.5, currentRatio: 0.4097, stage1Target: 0.65, stage2Target: 0.45, stage3Target: 0.35 },
+      { name: 'Dividend', currentAmount: 13778427.3, currentRatio: 0.0208, stage1Target: 0.05, stage2Target: 0.25, stage3Target: 0.45 },
+      { name: 'CASH', currentAmount: 166780713, currentRatio: 0.2517, stage1Target: 0.09, stage2Target: 0.15, stage3Target: 0.15 },
+      { name: 'Bond', currentAmount: 5905500, currentRatio: 0.0089, stage1Target: 0.01, stage2Target: 0.00, stage3Target: 0.00 },
+    ],
+    totalAmount: 662583350.5,
+  },
+};
+
+const ASSUMPTIONS = {
+  'Nasdaq':    { ret: 0.11,  vol: 0.22 },
+  'S&P500':    { ret: 0.085, vol: 0.16 },
+  'Dividend':  { ret: 0.07,  vol: 0.13 },
+  'Bond':      { ret: 0.04,  vol: 0.06 },
+  'CASH':      { ret: 0.032, vol: 0.01 },
+};
+
+const INK = '#1B1F2A';
+const PAPER = '#F3EFE4';
+const GOLD = '#B8863B';
+const SAGE = '#6B9080';
+const RUST = '#A8553F';
+const MUTED = '#8A8677';
+const PANEL = '#242938';
+const PIE_COLORS = { 'S&P500': GOLD, 'Nasdaq': RUST, 'Dividend': SAGE, 'Bond': '#6E86A8', 'CASH': MUTED };
+
+function fmtKRW(n) {
+  if (Math.abs(n) >= 100000000) return (n / 100000000).toFixed(2) + '억';
+  if (Math.abs(n) >= 10000) return Math.round(n / 10000).toLocaleString() + '만';
+  return Math.round(n).toLocaleString();
+}
+
+function gaussian() {
+  let u = 0, v = 0;
+  while (u === 0) u = Math.random();
+  while (v === 0) v = Math.random();
+  return Math.sqrt(-2 * Math.log(u)) * Math.cos(2 * Math.PI * v);
+}
+
+function stageForYear(year) {
+  if (year <= 2029) return 'stage1Target';
+  if (year <= 2032) return 'stage2Target';
+  return 'stage3Target';
+}
+
+function runMonteCarlo(categories, totalAmount, numSims = 1500) {
+  const validCategories = categories.filter(c => c.name !== '총합' && c.name !== '합계');
+  const finals = [];
+  
+  for (let s = 0; s < numSims; s++) {
+    let v = totalAmount;
+    for (let year = 2026; year <= 2035; year++) {
+      const stageKey = stageForYear(year);
+      let nextV = 0;
+      validCategories.forEach(cat => {
+        const weight = cat[stageKey] || 0;
+        const alloc = v * weight;
+        const params = ASSUMPTIONS[cat.name] || { ret: 0.05, vol: 0.1 };
+        const yearReturn = params.ret + params.vol * gaussian();
+        nextV += alloc * (1 + Math.max(yearReturn, -0.9));
+      });
+      v = nextV;
+    }
+    finals.push(v);
+  }
+  finals.sort((a, b) => a - b);
+  const p = (q) => finals[Math.floor(q * (finals.length - 1))];
+  const min = finals[0], max = finals[finals.length - 1];
+  const bins = 14;
+  const step = (max - min) / bins || 1;
+  const hist = Array.from({ length: bins }, (_, i) => ({ range: fmtKRW(min + i * step), count: 0 }));
+  finals.forEach(v => {
+    let idx = Math.min(bins - 1, Math.floor((v - min) / step));
+    hist[idx].count += 1;
+  });
+  return {
+    p5: p(0.05), p25: p(0.25), p50: p(0.5), p75: p(0.75), p95: p(0.95),
+    mean: finals.reduce((s, x) => s + x, 0) / finals.length,
+    hist,
+  };
+}
+
+function SegControl({ value, onChange, options }) {
+  return (
+    <div className="flex rounded-full p-1 gap-1" style={{ backgroundColor: '#E5DFCE' }}>
+      {options.map(opt => (
+        <button
+          key={opt.key}
+          onClick={() => opt.enabled !== false && onChange(opt.key)}
+          className="flex-1 flex items-center justify-center gap-1.5 py-2 rounded-full text-sm font-medium transition-colors"
+          style={{
+            backgroundColor: value === opt.key ? INK : 'transparent',
+            color: value === opt.key ? PAPER : opt.enabled === false ? '#B3AE9C' : '#5B5744',
+          }}
+        >
+          <span>{opt.icon}</span>
+          {opt.label}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+function WealthDashboard() {
+  const [tab, setTab] = useState('stocks');
+  const [data, setData] = useState(DEMO);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
+  const [mc, setMc] = useState(null);
+  const [mcRunning, setMcRunning] = useState(false);
+  const [showDetail, setShowDetail] = useState(false);
+
+  useEffect(() => {
+    fetchData();
+  }, []);
+
+  function fetchData() {
+    setLoading(true);
+    setError('');
+
+    const callbackName = 'wealthDashboardCb_' + Date.now();
+    
+    const timeoutId = setTimeout(() => {
+      cleanup();
+      setError('구글 시트 응답 지연으로 안전 모드(데모 데이터)로 진입했습니다.');
+      setLoading(false);
+    }, 8000);
+
+    function cleanup() {
+      clearTimeout(timeoutId);
+      delete window[callbackName];
+      const el = document.getElementById(callbackName);
+      if (el && el.parentNode) el.parentNode.removeChild(el);
+    }
+
+    window[callbackName] = (json) => {
+      cleanup();
+      if (json && json.stockHoldings && json.investPlan) {
+        setData(json);
+      } else {
+        setError('전달된 데이터 형식이 올바르지 않습니다.');
+      }
+      setLoading(false);
+    };
+
+    try {
+      const sep = DEFAULT_API_URL.includes('?') ? '&' : '?';
+      const script = document.createElement('script');
+      script.id = callbackName;
+      script.src = DEFAULT_API_URL + sep + 'callback=' + callbackName;
+      script.onerror = () => {
+        cleanup();
+        setError('API 연동에 실패했습니다. (네트워크나 스크립트 주소 확인 필요)');
+        setLoading(false);
+      };
+      document.body.appendChild(script);
+    } catch (e) {
+      cleanup();
+      setError('요청 생성 실패: ' + e.message);
+      setLoading(false);
+    }
+  }
+
+  const filteredCategories = useMemo(() => {
+    if (!data.investPlan || !data.investPlan.categories) return [];
+    return data.investPlan.categories.filter(c => c.name !== '총합' && c.name !== '합계');
+  }, [data.investPlan]);
+
+  const pureTotalAmount = useMemo(() => {
+    if (!filteredCategories.length) return data.investPlan?.totalAmount || 0;
+    const sum = filteredCategories.reduce((acc, c) => acc + (Number(c.currentAmount) || 0), 0);
+    return sum > 0 ? sum : (data.investPlan?.totalAmount || 0);
+  }, [filteredCategories, data.investPlan]);
+
+  const byAsset = useMemo(() => {
+    const map = {};
+    if (data.stockHoldings && Array.isArray(data.stockHoldings)) {
+      data.stockHoldings.forEach(h => { 
+        if (h.asset !== '총합' && h.asset !== '합계') {
+          if (!map[h.asset]) map[h.asset] = { value: 0, invested: 0 };
+          map[h.asset].value += (Number(h.value) || 0);
+          map[h.asset].invested += (Number(h.avgPrice) || Number(h.value) || 0);
+        }
+      });
+    }
+    return Object.entries(map).map(([name, v]) => ({ name, value: v.value, invested: v.invested }));
+  }, [data.stockHoldings]);
+
+  const totalValue = useMemo(() => byAsset.reduce((s, x) => s + x.value, 0), [byAsset]);
+  const totalInvested = useMemo(() => byAsset.reduce((s, x) => s + x.invested, 0), [byAsset]);
+  const totalProfitAmount = totalValue - totalInvested;
+  const totalProfitRate = totalInvested ? (totalProfitAmount / totalInvested) * 100 : 0;
+
+  const byAssetWithPct = useMemo(() => {
+    return byAsset
+      .map(a => ({
+        ...a,
+        pct: totalValue ? (a.value / totalValue) * 100 : 0,
+        profitRate: a.invested ? ((a.value - a.invested) / a.invested) * 100 : 0,
+      }))
+      .sort((a, b) => b.value - a.value);
+  }, [byAsset, totalValue]);
+
+  // 세부항목: ETF(상품명)별로 투자원금/평가금액/수익율 집계
+  const byName = useMemo(() => {
+    const map = {};
+    if (data.stockHoldings && Array.isArray(data.stockHoldings)) {
+      data.stockHoldings.forEach(h => {
+        if (h.asset === '총합' || h.asset === '합계') return;
+        const key = h.name || h.asset || '기타';
+        if (!map[key]) map[key] = { name: key, asset: h.asset, value: 0, invested: 0 };
+        map[key].value += (Number(h.value) || 0);
+        map[key].invested += (Number(h.avgPrice) || Number(h.value) || 0);
+      });
+    }
+    return Object.values(map)
+      .map(r => ({ ...r, profitRate: r.invested ? ((r.value - r.invested) / r.invested) * 100 : 0 }))
+      .sort((a, b) => b.value - a.value);
+  }, [data.stockHoldings]);
+
+  const currentVsTarget2026Fixed = useMemo(() => {
+    return filteredCategories.map(c => ({
+      name: c.name,
+      현재: Math.round((Number(c.currentRatio) || 0) * 1000) / 10,
+      목표: Math.round((Number(c.stage1Target) || 0) * 1000) / 10,
+    }));
+  }, [filteredCategories]);
+
+  const glideData = useMemo(() => {
+    if (!data.investPlan || !data.investPlan.stages) return [];
+    const stages = data.investPlan.stages;
+    return stages.map(st => {
+      const row = { period: st.period };
+      filteredCategories.forEach(c => {
+        const key = st.key + 'Target';
+        row[c.name] = Math.round((Number(c[key]) || 0) * 1000) / 10;
+      });
+      return row;
+    });
+  }, [data.investPlan, filteredCategories]);
+
+  function handleRunMonteCarlo() {
+    setMcRunning(true);
+    setTimeout(() => {
+      const result = runMonteCarlo(filteredCategories, pureTotalAmount, 1500);
+      setMc(result);
+      setMcRunning(false);
+    }, 50);
+  }
+
+  const catColors = ['#B8863B', '#A8553F', '#6B9080', '#6E86A8', '#8A8677'];
+  const tooltipBase = { contentStyle: { backgroundColor: INK, border: 'none', borderRadius: 8, color: PAPER }, itemStyle: { color: PAPER }, labelStyle: { color: PAPER } };
+
+  return (
+    <div className="min-h-screen w-full" style={{ backgroundColor: INK, fontFamily: 'Georgia, "Noto Serif KR", serif' }}>
+      <div className="max-w-md mx-auto px-4 pt-6 pb-10">
+
+        <div className="flex items-center justify-between mb-4">
+          <div>
+            <div className="text-xs tracking-widest uppercase" style={{ color: GOLD }}>Wealth Ledger</div>
+            <h1 className="text-2xl font-normal mt-0.5" style={{ color: PAPER }}>주식 자산 현황</h1>
+          </div>
+          <button 
+            onClick={fetchData} 
+            disabled={loading}
+            className="px-3 py-1.5 rounded-full text-xs font-medium transition-all" 
+            style={{ backgroundColor: PANEL, color: loading ? MUTED : PAPER }}
+          >
+            {loading ? '⏳ 갱신 중...' : '🔄 실시간 동기화'}
+          </button>
+        </div>
+
+        {error && (
+          <div className="mb-4 p-3 rounded-xl text-xs text-center font-sans" style={{ backgroundColor: '#3A1F24', color: '#FFA4A4' }}>
+            ⚠️ {error}
+          </div>
+        )}
+
+        <div className="mb-5">
+          <SegControl
+            value={tab}
+            onChange={setTab}
+            options={[
+              { key: 'stocks', label: '주식', icon: '📈', enabled: true },
+              { key: 'realestate', label: '부동산', icon: '🏢', enabled: false },
+              { key: 'retirement', label: '은퇴', icon: '🐷', enabled: false },
+            ]}
+          />
+        </div>
+
+        {tab === 'stocks' && (
+          <div className="space-y-4">
+
+            <div className="rounded-2xl p-4" style={{ backgroundColor: PAPER }}>
+              <div className="flex items-start justify-between">
+                <div className="text-xs tracking-wide" style={{ color: MUTED }}>총 평가액</div>
+                <button
+                  onClick={() => setShowDetail(v => !v)}
+                  className="text-xs font-medium px-2.5 py-1 rounded-full flex-shrink-0"
+                  style={{ backgroundColor: showDetail ? INK : '#E5DFCE', color: showDetail ? PAPER : '#5B5744' }}
+                >
+                  세부항목 {showDetail ? '▲' : '▼'}
+                </button>
+              </div>
+              <div className="flex items-baseline gap-2 mt-1 flex-wrap">
+                <div className="text-3xl tabular-nums" style={{ color: INK, fontFamily: 'ui-monospace, monospace' }}>{fmtKRW(totalValue)}원</div>
+                <div className="text-sm font-medium tabular-nums" style={{ color: totalProfitAmount >= 0 ? SAGE : RUST, fontFamily: 'ui-monospace, monospace' }}>
+                  {totalProfitAmount >= 0 ? '+' : ''}{totalProfitRate.toFixed(1)}% ({totalProfitAmount >= 0 ? '+' : ''}{fmtKRW(totalProfitAmount)}원)
+                </div>
+              </div>
+              <ResponsiveContainer width="100%" height={200}>
+                <PieChart>
+                  <Pie data={byAsset} dataKey="value" nameKey="name" innerRadius={45} outerRadius={80} paddingAngle={2}>
+                    {byAsset.map((entry, i) => (
+                      <Cell key={entry.name} fill={PIE_COLORS[entry.name] || catColors[i % catColors.length]} />
+                    ))}
+                  </Pie>
+                  <Tooltip {...tooltipBase} formatter={(v, n) => [fmtKRW(v) + '원', n]} />
+                </PieChart>
+              </ResponsiveContainer>
+              <div className="grid grid-cols-2 gap-x-3 gap-y-2 mt-2">
+                {byAssetWithPct.map((a, i) => (
+                  <div key={a.name} className="flex items-center justify-between text-xs">
+                    <div className="flex items-center gap-1.5 min-w-0">
+                      <span className="w-2.5 h-2.5 rounded-full flex-shrink-0" style={{ backgroundColor: PIE_COLORS[a.name] || catColors[i % catColors.length] }}></span>
+                      <span style={{ color: '#5B5744' }} className="truncate">{a.name}</span>
+                    </div>
+                    <span className="tabular-nums font-medium flex-shrink-0 flex items-baseline gap-1" style={{ color: INK, fontFamily: 'ui-monospace, monospace' }}>
+                      {a.pct.toFixed(1)}%
+                      <span style={{ color: a.profitRate >= 0 ? SAGE : RUST, fontSize: '0.65rem' }}>
+                        ({a.profitRate >= 0 ? '+' : ''}{a.profitRate.toFixed(1)}%)
+                      </span>
+                    </span>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            {showDetail && (
+              <div className="rounded-2xl p-4" style={{ backgroundColor: PAPER }}>
+                <div className="flex items-center justify-between mb-3">
+                  <div className="text-sm font-medium" style={{ color: INK }}>세부항목 (ETF별 손익)</div>
+                  <button
+                    onClick={() => setShowDetail(false)}
+                    className="w-6 h-6 flex items-center justify-center rounded-full text-xs font-bold flex-shrink-0"
+                    style={{ backgroundColor: INK, color: PAPER }}
+                  >
+                    ✕
+                  </button>
+                </div>
+                <div className="grid grid-cols-[1fr,auto,auto,auto] gap-x-2 gap-y-2 text-xs">
+                  <div style={{ color: MUTED }}>ETF</div>
+                  <div className="text-right" style={{ color: MUTED }}>투자원금</div>
+                  <div className="text-right" style={{ color: MUTED }}>평가금액</div>
+                  <div className="text-right" style={{ color: MUTED }}>수익률</div>
+                  {byName.map((r) => (
+                    <React.Fragment key={r.name}>
+                      <div className="truncate" style={{ color: INK }}>{r.name}</div>
+                      <div className="text-right tabular-nums" style={{ color: '#5B5744', fontFamily: 'ui-monospace, monospace' }}>{fmtKRW(r.invested)}</div>
+                      <div className="text-right tabular-nums" style={{ color: INK, fontFamily: 'ui-monospace, monospace' }}>{fmtKRW(r.value)}</div>
+                      <div className="text-right tabular-nums font-medium" style={{ color: r.profitRate >= 0 ? SAGE : RUST, fontFamily: 'ui-monospace, monospace' }}>
+                        {r.profitRate >= 0 ? '+' : ''}{r.profitRate.toFixed(1)}%
+                      </div>
+                    </React.Fragment>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            <div className="rounded-2xl p-4" style={{ backgroundColor: PAPER }}>
+              <div className="text-sm font-medium mb-3" style={{ color: INK }}>2026년 현재 vs 목표(1단계)</div>
+              <ResponsiveContainer width="100%" height={200}>
+                <BarChart data={currentVsTarget2026Fixed} barGap={4}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="#D8D2C0" vertical={false} />
+                  <XAxis dataKey="name" tick={{ fill: '#5B5744', fontSize: 11 }} axisLine={false} tickLine={false} />
+                  <YAxis tick={{ fill: '#5B5744', fontSize: 11 }} axisLine={false} tickLine={false} unit="%" />
+                  <Tooltip {...tooltipBase} />
+                  <Bar dataKey="현재" fill={SAGE} radius={[4, 4, 0, 0]} />
+                  <Bar dataKey="목표" fill={GOLD} radius={[4, 4, 0, 0]} />
+                </BarChart>
+              </ResponsiveContainer>
+            </div>
+
+            <div className="rounded-2xl p-4" style={{ backgroundColor: PAPER }}>
+              <div className="text-sm font-medium mb-1" style={{ color: INK }}>글라이드슬롭 (3단계 계획)</div>
+              <div className="text-xs mb-3" style={{ color: MUTED }}>2026~29 → 2030~32 → 2033~35, 목표 비중 변화</div>
+              <ResponsiveContainer width="100%" height={200}>
+                <LineChart data={glideData}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="#D8D2C0" vertical={false} />
+                  <XAxis dataKey="period" tick={{ fill: '#5B5744', fontSize: 11 }} axisLine={false} tickLine={false} />
+                  <YAxis tick={{ fill: '#5B5744', fontSize: 11 }} axisLine={false} tickLine={false} unit="%" />
+                  <Tooltip {...tooltipBase} />
+                  <Legend wrapperStyle={{ fontSize: 11 }} />
+                  {filteredCategories.map((c, i) => (
+                    <Line key={c.name} type="linear" dataKey={c.name} stroke={PIE_COLORS[c.name] || catColors[i % catColors.length]} strokeWidth={2} dot={{ r: 3 }} />
+                  ))}
+                </LineChart>
+              </ResponsiveContainer>
+            </div>
+
+            <div className="rounded-2xl p-4" style={{ backgroundColor: PAPER }}>
+              <div className="flex items-center justify-between mb-1">
+                <div className="text-sm font-medium" style={{ color: INK }}>몬테카를로 시뮬레이션</div>
+                <button
+                  onClick={handleRunMonteCarlo}
+                  disabled={mcRunning}
+                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium"
+                  style={{ backgroundColor: INK, color: PAPER }}
+                >
+                  🎲 {mcRunning ? '계산 중...' : mc ? '다시 실행' : '실행'}
+                </button>
+              </div>
+              <div className="text-xs mb-3" style={{ color: MUTED }}>
+                2026→2035, 총 {fmtKRW(pureTotalAmount)}원 기준 · 단계별 목표배분 리밸런싱 가정 · 1,500회 시뮬레이션
+              </div>
+
+              {!mc && <div className="text-xs py-6 text-center" style={{ color: MUTED }}>"실행"을 눌러 2035년 예상 자산 분포를 계산하세요</div>}
+
+              {mc && (
+                <>
+                  <ResponsiveContainer width="100%" height={160}>
+                    <BarChart data={mc.hist}>
+                      <XAxis dataKey="range" tick={{ fill: '#5B5744', fontSize: 9 }} axisLine={false} tickLine={false} interval={2} />
+                      <YAxis hide />
+                      <Tooltip {...tooltipBase} formatter={(v) => [v + '회', '빈도']} />
+                      <Bar dataKey="count" fill={GOLD} radius={[3, 3, 0, 0]} />
+                    </BarChart>
+                  </ResponsiveContainer>
+
+                  <div className="grid grid-cols-2 gap-2 mt-3 text-xs" style={{ color: '#5B5744' }}>
+                    <div className="rounded-lg p-2" style={{ backgroundColor: '#E5DFCE' }}>
+                      <div style={{ color: MUTED }}>중간값(50%)</div>
+                      <div className="tabular-nums font-medium" style={{ fontFamily: 'ui-monospace, monospace' }}>{fmtKRW(mc.p50)}원</div>
+                    </div>
+                    <div className="rounded-lg p-2" style={{ backgroundColor: '#E5DFCE' }}>
+                      <div style={{ color: MUTED }}>평균</div>
+                      <div className="tabular-nums font-medium" style={{ fontFamily: 'ui-monospace, monospace' }}>{fmtKRW(mc.mean)}원</div>
+                    </div>
+                    <div className="rounded-lg p-2" style={{ backgroundColor: '#E5DFCE' }}>
+                      <div style={{ color: MUTED }}>하위 5% (비관)</div>
+                      <div className="tabular-nums font-medium" style={{ fontFamily: 'ui-monospace, monospace', color: RUST }}>{fmtKRW(mc.p5)}원</div>
+                    </div>
+                    <div className="rounded-lg p-2" style={{ backgroundColor: '#E5DFCE' }}>
+                      <div style={{ color: MUTED }}>상위 5% (낙관)</div>
+                      <div className="tabular-nums font-medium" style={{ fontFamily: 'ui-monospace, monospace', color: SAGE }}>{fmtKRW(mc.p95)}원</div>
+                    </div>
+                  </div>
+                </>
+              )}
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById('root')).render(<WealthDashboard />);
+</script>
+</body>
+</html>
